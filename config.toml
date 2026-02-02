@@ -1,0 +1,20 @@
+[theme]
+primaryColor = "#1f77b4"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
+
+[server]
+maxUploadSize = 500
+enableXsrfProtection = true
+enableCORS = false
+headless = true
+
+[runner]
+# 增加脚本运行超时时间，避免安装R包或处理大数据时超时
+scriptRunTimeout = 1800
+
+[browser]
+# 健康检查相关配置
+gatherUsageStats = false
