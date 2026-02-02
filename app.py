@@ -39,12 +39,12 @@ def install_r_packages_now():
             st.error("❌ 找不到 install_r_packages.R 文件")
             return False
         
-        with st.spinner("⏳ 正在安装R包（约需3-5分钟），请耐心等待..."):
+        with st.spinner("⏳ 正在安装R包（约需5-10分钟），请耐心等待..."):
             result = subprocess.run(
                 ['Rscript', str(install_script)],
                 capture_output=True,
                 text=True,
-                timeout=600
+                timeout=1200  # 20分钟
             )
             
             if result.returncode == 0:
@@ -187,11 +187,11 @@ def run_r_script(script_content, work_dir):
             cwd=work_dir,
             capture_output=True,
             text=True,
-            timeout=600
+            timeout=1200  # 20分钟
         )
         return result.stdout, result.stderr, result.returncode
     except subprocess.TimeoutExpired:
-        return "", "处理超时（超过10分钟）", 1
+        return "", "处理超时（超过20分钟）", 1
     except Exception as e:
         return "", f"执行R脚本出错: {str(e)}", 1
 
