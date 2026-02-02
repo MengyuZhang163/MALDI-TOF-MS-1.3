@@ -8,7 +8,14 @@ import zipfile
 import io
 import os
 import gc
-import psutil
+
+# 尝试导入psutil，如果失败则禁用内存监控功能
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    st.warning("⚠️ psutil 未安装，内存监控功能已禁用。请在 requirements.txt 中添加 psutil>=5.9.0")
 
 # 检查R包是否已安装（不执行安装）
 @st.cache_resource
@@ -146,6 +153,8 @@ if 'template_data' not in st.session_state:
 # 内存管理函数
 def get_memory_usage():
     """获取当前内存使用情况（MB）"""
+    if not PSUTIL_AVAILABLE:
+        return 0
     try:
         process = psutil.Process(os.getpid())
         return process.memory_info().rss / 1024 / 1024
@@ -305,15 +314,19 @@ with st.sidebar:
     
     # 内存监控和清理
     st.header("💾 内存管理")
-    memory_usage = get_memory_usage()
     
-    if memory_usage > 0:
-        st.metric("当前内存使用", f"{memory_usage:.1f} MB")
+    if PSUTIL_AVAILABLE:
+        memory_usage = get_memory_usage()
         
-        if memory_usage > 700:
-            st.warning("⚠️ 内存使用较高，建议清理")
-        elif memory_usage > 500:
-            st.info("ℹ️ 内存使用中等")
+        if memory_usage > 0:
+            st.metric("当前内存使用", f"{memory_usage:.1f} MB")
+            
+            if memory_usage > 700:
+                st.warning("⚠️ 内存使用较高，建议清理")
+            elif memory_usage > 500:
+                st.info("ℹ️ 内存使用中等")
+    else:
+        st.info("ℹ️ 内存监控功能未启用\n需要安装 psutil 模块")
     
     col1, col2 = st.columns(2)
     with col1:
