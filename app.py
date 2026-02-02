@@ -225,12 +225,21 @@ with st.sidebar:
         SNR = st.slider("信噪比阈值", 1.0, 10.0, 2.0, 0.5)
         tolerance = st.slider("对齐容差", 0.001, 0.02, 0.008, 0.001, format="%.4f")
         iterations = st.slider("基线去除迭代次数", 50, 200, 100, 10)
+        
+        st.divider()
+        st.subheader("🔧 专家选项")
+        skip_alignment = st.checkbox("跳过光谱对齐", value=False, 
+                                      help="如果对齐失败，勾选此项跳过对齐步骤")
+        relaxed_params = st.checkbox("使用宽松参数", value=True,
+                                      help="自动放宽参数以提高成功率")
     
     processing_params = {
         'halfWindowSize': halfWindowSize,
         'SNR': SNR,
         'tolerance': tolerance,
-        'iterations': iterations
+        'iterations': iterations,
+        'skip_alignment': skip_alignment,
+        'relaxed_params': relaxed_params
     }
     
     st.divider()
@@ -407,13 +416,40 @@ cat("计算平均谱...\\n")
 avgSpectra <- averageMassSpectra(training_spectra, labels = train_labels)
 cat(sprintf("计算平均谱: %d 个分组\\n", length(avgSpectra)))
 
-# 对齐
+# 对齐（可选，带容错）
+{"" if params.get('skip_alignment', False) else f'''
 cat("对齐平均谱...\\n")
-avgSpectra <- alignSpectra(avgSpectra,
-                           halfWindowSize = {params['halfWindowSize']},
-                           SNR = {params['SNR']},
-                           tolerance = {params['tolerance']},
-                           warpingMethod = "lowess")
+alignment_success <- FALSE
+tryCatch({{
+  avgSpectra <- alignSpectra(avgSpectra,
+                             halfWindowSize = {params['halfWindowSize']},
+                             SNR = {params['SNR']},
+                             tolerance = {params['tolerance']},
+                             warpingMethod = "lowess")
+  alignment_success <- TRUE
+  cat("对齐完成\\n")
+}}, error = function(e) {{
+  cat(sprintf("对齐失败: %s\\n", e$message))
+  {"" if not params.get('relaxed_params', True) else '''
+  cat("尝试使用宽松参数...\\n")
+  tryCatch({{
+    avgSpectra <<- alignSpectra(avgSpectra,
+                                halfWindowSize = {params['halfWindowSize']},
+                                SNR = max(1.5, {params['SNR']} - 0.5),
+                                tolerance = {params['tolerance']} * 2,
+                                warpingMethod = "lowess")
+    alignment_success <<- TRUE
+    cat("使用宽松参数对齐成功\\n")
+  }}, error = function(e2) {{
+    cat("宽松参数仍失败，跳过对齐...\\n")
+  }})
+  '''}
+}})
+
+if (!alignment_success) {{
+  cat("警告: 光谱对齐失败，将使用未对齐的数据继续\\n")
+}}
+'''}
 
 # 检测峰
 cat("检测峰，建立特征模版...\\n")
@@ -461,11 +497,12 @@ write.csv(train_df,
 # 保存处理参数
 cat("保存处理参数...\\n")
 params_df <- data.frame(
-  parameter = c('halfWindowSize', 'SNR', 'tolerance', 'iterations'),
+  parameter = c('halfWindowSize', 'SNR', 'tolerance', 'iterations', 'skip_alignment'),
   value = c({params['halfWindowSize']}, 
             {params['SNR']}, 
             {params['tolerance']},
-            {params['iterations']})
+            {params['iterations']},
+            {'TRUE' if params.get('skip_alignment', False) else 'FALSE'})
 )
 write.csv(params_df, '{temp_dir}/processing_params.csv', row.names = FALSE)
 
@@ -693,13 +730,32 @@ validation_spectra <- removeBaseline(validation_spectra, method = "SNIP",
 cat("执行预处理（4/4）: 强度校准...\\n")
 validation_spectra <- calibrateIntensity(validation_spectra, method = "TIC")
 
-# 对齐
+# 对齐（增加容错）
 cat("对齐验证集光谱...\\n")
-validation_spectra <- alignSpectra(validation_spectra,
-                                   halfWindowSize = {params['halfWindowSize']},
-                                   SNR = {params['SNR']},
-                                   tolerance = {params['tolerance']},
-                                   warpingMethod = "lowess")
+tryCatch({{
+  validation_spectra <- alignSpectra(validation_spectra,
+                                     halfWindowSize = {params['halfWindowSize']},
+                                     SNR = {params['SNR']},
+                                     tolerance = {params['tolerance']},
+                                     warpingMethod = "lowess")
+  cat("对齐完成\\n")
+}}, error = function(e) {{
+  cat("标准对齐失败，尝试放宽参数...\\n")
+  cat(sprintf("错误信息: %s\\n", e$message))
+  
+  # 尝试更宽松的参数
+  tryCatch({{
+    validation_spectra <<- alignSpectra(validation_spectra,
+                                        halfWindowSize = {params['halfWindowSize']},
+                                        SNR = max(1.5, {params['SNR']} - 0.5),
+                                        tolerance = {params['tolerance']} * 1.5,
+                                        warpingMethod = "lowess")
+    cat("使用宽松参数对齐成功\\n")
+  }}, error = function(e2) {{
+    cat("放宽参数仍失败，跳过对齐步骤...\\n")
+    cat("将继续使用未对齐的光谱\\n")
+  }})
+}})
 
 # 使用模版提取强度
 cat("使用模版提取强度...\\n")
