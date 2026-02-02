@@ -17,89 +17,49 @@ except ImportError:
     PSUTIL_AVAILABLE = False
     st.warning("⚠️ psutil 未安装，内存监控功能已禁用。请在 requirements.txt 中添加 psutil>=5.9.0")
 
-# 检查R包是否已安装（不执行安装）
-@st.cache_resource
+# 检查R包是否已安装（轻量级检查）
 def check_r_packages_installed():
-    """检查R包是否已安装"""
+    """快速检查R包是否已安装，避免阻塞"""
     try:
         result = subprocess.run(
-            ['Rscript', '-e', 'library(MALDIquant); library(MALDIquantForeign); library(readxl)'],
+            ['Rscript', '-e', 'library(MALDIquant); library(MALDIquantForeign); library(readxl); cat("OK")'],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=5  # 减少超时时间到5秒
         )
-        return result.returncode == 0
+        return result.returncode == 0 and "OK" in result.stdout
     except:
         return False
 
-def diagnose_r_packages():
-    """诊断R包安装情况，返回详细信息"""
-    packages = ['MALDIquant', 'MALDIquantForeign', 'readxl']
-    results = {}
-    
-    for pkg in packages:
-        try:
-            result = subprocess.run(
-                ['Rscript', '-e', f'library({pkg})'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            results[pkg] = {
-                'installed': result.returncode == 0,
-                'error': result.stderr if result.returncode != 0 else None
-            }
-        except:
-            results[pkg] = {'installed': False, 'error': 'Timeout or execution error'}
-    
-    return results
-
 def install_r_packages_now():
-    """实际安装R包（在用户交互时执行）"""
+    """实际安装R包（简化版本）"""
     try:
         install_script = Path('install_r_packages.R')
         if not install_script.exists():
             st.error("❌ 找不到 install_r_packages.R 文件")
             return False
         
-        # 显示安装进度
-        st.info("⏳ 正在安装R包（约需3-5分钟）...")
-        st.text("正在安装: MALDIquant, MALDIquantForeign, readxl")
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        status_text.text("📦 正在下载和安装R包...")
-        progress_bar.progress(30)
-        
-        result = subprocess.run(
-            ['Rscript', str(install_script)],
-            capture_output=True,
-            text=True,
-            timeout=600
-        )
-        
-        progress_bar.progress(90)
-        
-        if result.returncode == 0:
-            progress_bar.progress(100)
-            status_text.empty()
-            progress_bar.empty()
-            st.success("✅ R包安装完成！")
+        with st.spinner("⏳ 正在安装R包（约需3-5分钟），请耐心等待..."):
+            result = subprocess.run(
+                ['Rscript', str(install_script)],
+                capture_output=True,
+                text=True,
+                timeout=600
+            )
             
-            # 显示安装日志
-            with st.expander("查看安装日志"):
-                st.code(result.stdout, language='text')
-            
-            # 标记为已安装
-            st.session_state.r_packages_installed = True
-            return True
-        else:
-            st.error(f"❌ R包安装失败")
-            st.code(result.stdout, language='text')
-            st.code(result.stderr, language='text')
-            return False
-            
+            if result.returncode == 0:
+                st.success("✅ R包安装完成！")
+                # 显示安装日志
+                with st.expander("查看安装日志"):
+                    st.code(result.stdout, language='text')
+                # 标记为已安装
+                st.session_state.r_packages_installed = True
+                return True
+            else:
+                st.error("❌ R包安装失败")
+                st.code(result.stderr, language='text')
+                return False
+                
     except Exception as e:
         st.error(f"❌ 安装出错: {str(e)}")
         return False
@@ -112,9 +72,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 初始化R包安装状态
+# 初始化R包安装状态（延迟检查，不阻塞启动）
 if 'r_packages_installed' not in st.session_state:
-    st.session_state.r_packages_installed = check_r_packages_installed()
+    st.session_state.r_packages_installed = None  # None表示未检查
+if 'r_check_done' not in st.session_state:
+    st.session_state.r_check_done = False
 
 # 自定义CSS
 st.markdown("""
@@ -276,38 +238,27 @@ with st.sidebar:
     # 检查R环境
     st.header("🔧 环境检查")
     
-    # R环境检查
+    # R环境基础检查
     if check_r_installation():
         st.success("✅ R环境已安装")
     else:
         st.error("❌ 未检测到R环境")
+        st.stop()
     
-    # R包检查和安装
-    if st.session_state.r_packages_installed:
+    # R包检查（延迟到用户点击时）
+    if st.session_state.r_packages_installed is None:
+        # 尚未检查
+        if st.button("🔍 检查R包状态", use_container_width=True):
+            with st.spinner("检查中..."):
+                st.session_state.r_packages_installed = check_r_packages_installed()
+                st.session_state.r_check_done = True
+                st.rerun()
+    elif st.session_state.r_packages_installed:
         st.success("✅ R包已安装")
     else:
         st.warning("⚠️ R包未安装")
-        
-        # 显示详细诊断
-        with st.expander("查看详细状态"):
-            diag = diagnose_r_packages()
-            for pkg, info in diag.items():
-                if info['installed']:
-                    st.success(f"✅ {pkg}")
-                else:
-                    st.error(f"❌ {pkg}")
-                    if info['error']:
-                        st.code(info['error'], language='text')
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📦 立即安装", type="primary", use_container_width=True):
-                if install_r_packages_now():
-                    st.rerun()
-        with col2:
-            if st.button("🔄 重新检测", use_container_width=True):
-                st.cache_resource.clear()
-                st.session_state.r_packages_installed = check_r_packages_installed()
+        if st.button("📦 立即安装R包", type="primary", use_container_width=True):
+            if install_r_packages_now():
                 st.rerun()
     
     st.divider()
@@ -360,13 +311,19 @@ with tab1:
             
             if st.button("🎯 建立训练集模版", type="primary", use_container_width=True):
                 
-                # 检查R包是否已安装
-                if not st.session_state.r_packages_installed:
-                    st.error("❌ R包未安装！请先在左侧边栏点击「立即安装R包」按钮")
-                    st.stop()
-                
+                # 检查R环境和R包
                 if not check_r_installation():
                     st.error("❌ R环境未安装，无法处理数据！")
+                    st.stop()
+                
+                # 如果R包状态未知，先检查
+                if st.session_state.r_packages_installed is None:
+                    with st.spinner("检查R包状态..."):
+                        st.session_state.r_packages_installed = check_r_packages_installed()
+                
+                # 检查R包是否已安装
+                if not st.session_state.r_packages_installed:
+                    st.error("❌ R包未安装！请先在左侧边栏检查并安装R包")
                     st.stop()
                 
                 # 创建进度条和状态文本
@@ -645,13 +602,19 @@ with tab2:
         if valid_zip:
             if st.button("🔄 处理验证集", type="primary", use_container_width=True):
                 
-                # 检查R包是否已安装
-                if not st.session_state.r_packages_installed:
-                    st.error("❌ R包未安装！请先在左侧边栏点击「立即安装R包」按钮")
-                    st.stop()
-                
+                # 检查R环境和R包
                 if not check_r_installation():
                     st.error("❌ R环境未安装，无法处理数据！")
+                    st.stop()
+                
+                # 如果R包状态未知，先检查
+                if st.session_state.r_packages_installed is None:
+                    with st.spinner("检查R包状态..."):
+                        st.session_state.r_packages_installed = check_r_packages_installed()
+                
+                # 检查R包是否已安装
+                if not st.session_state.r_packages_installed:
+                    st.error("❌ R包未安装！请先在左侧边栏检查并安装R包")
                     st.stop()
                 
                 # 创建进度条和状态文本
